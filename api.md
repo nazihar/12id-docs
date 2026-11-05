@@ -11,7 +11,7 @@ Base URL: `https://api.12id.com` (production, from go-live); `https://api.12id.n
 
 Never ship an API key in an app. The wallet token is per installation and can be revoked with `DELETE /v1/wallets/{id}`.
 
-**What an API key can do.** An API key runs your integration: connections, credential offers, proof requests and wallets, plus reading everything (catalogue, templates, webhook endpoint and deliveries). **Setup is done in the 12id console, not with an API key:**
+**What an API key can do.** An API key runs your integration: connections, credential offers, revoking and suspending credentials, proof requests and wallets, plus reading everything (catalogue, templates, webhook endpoint and deliveries). **Setup is done in the 12id console, not with an API key:**
 - publishing schemas and credential definitions, and deprecating schemas;
 - creating, editing and deleting proof templates;
 - setting biometric policies;
@@ -26,7 +26,7 @@ Every command returns immediately (`202`) with the exchange record. The holder a
 **Lists.** Every list route (`GET /v1/connections`, `/v1/credentials`, `/v1/proofs`, `/v1/wallets`, `/v1/webhook/deliveries`, `/v1/proof-templates`, `/v1/schemas`, `/v1/credential-definitions`) answers `{ "items": [...], "total": 312, "page": 1, "pageSize": 25 }`, newest first (`createdAt` descending); the order cannot be changed.
 - `page` starts at 1, and `pageSize` is 25, 50 or 100 (default 25). A page past the end has an empty `items`.
 - `q` is a case-insensitive contains search; on exchanges, `externalId` is the same match on your reference only (`?externalId=4711` finds `order-4711-b`).
-- Exchanges also filter by `state` (repeat it for several: `?state=done&state=abandoned`). Exchanges, wallets and deliveries filter by creation time with `from` (inclusive) and `to` (exclusive), both ISO 8601.
+- Exchanges also filter by `state` (repeat it for several: `?state=done&state=abandoned`). Credentials also filter by `revocation`: `active`, `suspended`, `revoked`, or `pending` for a change not on the ledger yet. Exchanges, wallets and deliveries filter by creation time with `from` (inclusive) and `to` (exclusive), both ISO 8601.
 - `total` counts every match, so `ceil(total / pageSize)` is the last page. To walk everything, raise `page` until `items` is empty.
 
 **Rate limits.** Each API key may make 300 requests per minute, unless 12id raised the limit for your organisation. Each wallet token (the SDK) may make 60 requests per minute, and 3 mediator invitations per 10 minutes. Above a limit the API answers `429 rate_limited` with a `Retry-After` header (seconds). Wait that long, then retry.
@@ -65,10 +65,29 @@ The full guide, with encoding recipes for dates, amounts and yes/no values, vali
 - Values are strings. No nested objects, arrays, numbers or dates — encode a date to compare as `YYYYMMDD` and a date only to display as ISO text.
 - Predicates (`>=`, `>`, `<=`, `<`) work only on attributes whose values are integers.
 - Predicates compare whole numbers from `-2147483648` to `2147483647` only; any other value is hashed and can be disclosed but not compared.
-- Every schema must contain `expiresOn`: the expiry date as `YYYYMMDD` (UTC), today or later on an offer, any date up to the year 9999. The credential is accepted through the end of that day. **Credentials cannot be revoked in v1**; every proof request automatically checks `expiresOn >= today`, so expiry is how a credential stops being accepted. `expiresOn` can therefore never be disclosed.
+- Every schema must contain `expiresOn`: the expiry date as `YYYYMMDD` (UTC), today or later on an offer, any date up to the year 9999. The credential is accepted through the end of that day. Every proof request automatically checks `expiresOn >= today`, so `expiresOn` can never be disclosed. A credential can also end earlier: see "Revoking and suspending" below.
 - No attribute may be named `id`: wallets take it as the credential subject's identifier and cannot store the credential.
 - A schema cannot change. Adding a field means a new version; deprecate the old one to stop new offers while templates referencing the schema by name keep accepting both.
 - Size limits on an offer: at most 125 attributes, names up to 100 characters, each value up to 4 KB, and 64 KB for all names and values together (400 otherwise). Credentials are meant for claims, not documents; store a document elsewhere and put its hash or reference in an attribute.
+
+## Revoking and suspending
+
+Every credential definition published since platform 0.12 is revocable (`revocable: true` on `GET /v1/credential-definitions`). An issued credential of such a definition has a `revocation` object; it is `null` for one that is not revocable or not issued yet.
+
+| Call | Effect | `revocation.status` until it is on the ledger, then after |
+|---|---|---|
+| `POST /v1/credentials/{id}/suspend` | Proof requests stop accepting it | `suspending`, then `suspended` |
+| `POST /v1/credentials/{id}/reinstate` | Accepted again (a suspended credential only) | `reinstating`, then `active` |
+| `POST /v1/credentials/{id}/revoke` | Refused for good; cannot be undone | `revoking`, then `revoked` |
+
+- Body (optional): `{ "reason": "account closed" }`, up to 500 characters. It is kept with the credential (`revocation.reason`) and erased with the personal data.
+- Each answers `202` with the credential. The change reaches the ledger within seconds; then you receive **`credential.revocation_changed`** (the credential, plus `previousRevocation`), and from then on every proof request refuses it. `revocation.changedAt` is the ledger time of that change.
+- `409` for a credential that is not revocable or not issued yet, and for a reinstate or suspend of a revoked one. Asking for the state a credential is already in changes nothing. An erased credential can still be revoked.
+- Every proof request checks this automatically, as of the moment it is sent. A verifier cannot tell a suspended credential from a revoked one.
+- From the console, the same actions are on the credential's row; a reinstate there waits for a second person when your organisation requires approval.
+
+The model behind it, and how to move credentials issued under an older, non-revocable definition: [`credential-model.md`](credential-model.md), "Revoking and suspending".
+
 ## Webhooks
 
 Set the endpoint in the console (https only). The signing secret is shown once, when the endpoint is created or the secret is rotated. `GET /v1/webhook` returns the current URL and event filter. Each event is POSTed as:
@@ -153,6 +172,6 @@ To erase on a user's request:
 - `POST /v1/credentials/{id}/erase` or `POST /v1/proofs/{id}/erase` for one finished exchange (409 while it is still running);
 - `POST /v1/connections/{id}/erase` for a person's whole relationship with you: the connection and every exchange on it.
 
-The record stays, with `erasedAt` set and its personal data `null`. `GET /v1/erasures` lists every erasure made on request. Erasing does not invalidate an issued credential: it stays usable until its `expiresAt`.
+The record stays, with `erasedAt` set and its personal data `null`. `GET /v1/erasures` lists every erasure made on request. Erasing does not revoke an issued credential: revoke it as well if it should stop working (it stays revocable after the erasure).
 
 The full description, for your privacy and legal teams: [`data-protection.md`](data-protection.md).

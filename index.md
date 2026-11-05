@@ -12,8 +12,8 @@ holds the user's credentials through the 12iD SDK; 12iD runs everything in betwe
 
 | Guide | For | What it covers |
 |---|---|---|
-| [Credential model](credential-model.md) | Product owners, developers | What a credential is, validity and expiry, why there is no revocation, wallet recovery, how to encode values. **Read before designing a schema.** |
-| [Platform API guide](api.md) | Backend developers | Credentials, the asynchronous model, the typical flow, webhooks, biometric checks, erasure |
+| [Credential model](credential-model.md) | Product owners, developers | What a credential is, validity and expiry, revoking and suspending, wallet recovery, how to encode values. **Read before designing a schema.** |
+| [Platform API guide](api.md) | Backend developers | Credentials, the asynchronous model, the typical flow, revoking and suspending, webhooks, biometric checks, erasure |
 | [API reference](reference.html) | Backend developers | Every route, request and response, from the platform's OpenAPI document ([`openapi.json`](openapi.json)) |
 | [Android SDK guide](android-sdk.md) | App developers | Gradle setup from `https://maven.12id.com`, initialisation, offers and proofs, push, backups, biometrics |
 | [Data protection](data-protection.md) | Privacy and legal teams | Roles, what is stored where, retention, erasure, backups, hosting, security measures, staff access |

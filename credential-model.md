@@ -1,7 +1,7 @@
 # The 12iD credential model
 
 **For:** the product owners and developers of organisations that issue or verify credentials with 12iD.
-**Describes:** what a 12iD credential is, how long it is valid, why it cannot be revoked, what happens when
+**Describes:** what a 12iD credential is, how long it is valid, how you revoke or suspend it, what happens when
 a user loses their phone, and how to design schemas whose values work in proofs. Read it before you design
 your first schema: some of these choices cannot be changed later.
 
@@ -23,11 +23,13 @@ What lives where:
 |---|---|---|
 | The credential | Only on the user's phone | 12iD keeps no copy and cannot read the wallet |
 | The schema (the list of value *names*) and your credential definition (your signing key's public part) | The public Indy ledger | Never any value or personal data |
+| Revocation registries (which slots are revoked) | The public Indy ledger | Slot numbers only; never who holds a slot |
 | The exchange record (who was offered what, and when) | 12iD's platform, for you | Values are erased after your retention period ([`data-protection.md`](data-protection.md)) |
 
 ## Validity: every credential expires
 
-There is no revocation in this version of 12iD, so **expiry is how a credential stops being accepted.**
+A credential stops being accepted when its `expiresOn` date passes, or earlier when you revoke or suspend it
+(next section). **Expiry is always there**, also for verifiers that never read the ledger.
 
 - **Every schema contains `expiresOn`.** The console adds it when you publish a schema.
 - **You set it on every offer.** It is the expiry date as `YYYYMMDD`, as a string (`"20271231"` is 31 December 2027), today or later. Dates are UTC.
@@ -36,15 +38,43 @@ There is no revocation in this version of 12iD, so **expiry is how a credential 
 - **`expiresOn` is never disclosed.** A proof only shows that the credential is still valid, not its date.
 - **Any date up to the year 9999 works.** Expiry is a whole day, not a time of day.
 
-**Choose the validity period for each credential type.** A shorter period limits how long a credential you
-can no longer stand behind stays usable. A longer one means fewer re-issues. As a guide: months for access
-and membership, a year or two for qualifications, with re-issue on renewal.
+**Choose the validity period for each credential type.** Revocation lets you end a credential early, so the
+period is about how often the facts should be confirmed again. As a guide: months for access and membership,
+a year or two for qualifications, with re-issue on renewal.
 
-## No revocation: what it means for you
+## Revoking and suspending
 
-- **An issued credential cannot be withdrawn before its `expiresOn` date.** This holds even when the person leaves your organisation, or you erase your records of the exchange ([`data-protection.md`](data-protection.md), "What erasure does not do").
-- **If the facts change** (new department, new expiry), issue a new credential. The verifier's proof request decides which credentials it accepts. The user's app can delete the old one; you cannot delete it remotely.
-- **If you need early invalidation** (for example for high-risk access), keep expiry short and re-issue often, and talk to us. Revocation would need new credential definitions, so it cannot be added to credentials already issued.
+Every credential definition published since platform 0.12 is **revocable**. For each issued credential you can:
+
+| | What it does | Undo |
+|---|---|---|
+| **Suspend** | Proof requests stop accepting it, for example while you look into a fraud alert | **Reinstate** |
+| **Revoke** | Proof requests stop accepting it for good, for example when the account is closed | None: issue a new credential instead |
+
+- **From your backend:** `POST /v1/credentials/{id}/suspend`, `/reinstate` or `/revoke`, with an optional `reason` ([`api.md`](api.md)).
+- **From the console:** the same three actions on the credential's row (Exchanges, or the customer's page), for people whose role includes "Revoke and suspend credentials". When your organisation requires approval, a reinstate waits for a second person; a suspend or revoke never waits.
+- **It takes effect within seconds.** The change is written to the ledger; until then the credential's `revocation.status` is `suspending`, `reinstating` or `revoking`. When it is written, you receive the `credential.revocation_changed` webhook, and from then on every proof request refuses the credential.
+- **The credential stays in the user's wallet.** The wallet no longer offers it for a proof request. Your app can show its state: the SDK's `credentialStatus()` reads it from the ledger.
+- **A verifier cannot tell a suspended credential from a revoked one.** Only you see the difference.
+- **Every proof request checks it automatically**, like expiry, and you cannot remove that check.
+
+**What the ledger shows.** Revocation works through *registries*: groups of up to 9,999 credentials of one
+definition. The ledger records which slots of a registry are revoked, never who holds a slot. A proof shows
+which registry the credential is in, not which credential it is. The first time a user's phone proves a
+credential from a registry, it downloads that registry's file once: about 2.4 MB.
+
+**Credentials issued before revocation existed.** A credential definition published before platform 0.12 is
+not revocable, and cannot become revocable: the ledger does not allow it. To move:
+1. Publish a revocable definition next to the old one. The console offers "Publish a revocable credential definition" on the schema's row; it uses the tag `revocable`.
+2. Point your backend's offers at the new definition, and issue your users their credentials again.
+3. Proof templates that name the schema accept both definitions. The old credentials stay valid until their `expiresOn` date; from then on, only revocable ones remain.
+
+The console shows each definition as "Not revocable", or with how many credentials its registries have
+issued.
+
+**Erasure does not revoke.** Erasing a person's data and ending their credential are separate requests
+([`data-protection.md`](data-protection.md), "What erasure does not do"). A credential stays revocable after
+its data is erased.
 
 ## Wallet recovery: accept the loss, issue again
 
@@ -58,7 +88,7 @@ this version.** These all mean a new, empty wallet:
 What happens and what you do:
 1. The app gets a new wallet. Your backend creates it with `POST /v1/wallets` (a new installation id gives a new wallet; a person may have several).
 2. **You issue the person's credentials again.** Make this one step for the user: keep the facts you issued from in your own systems, and offer the credentials again when the new wallet connects to you.
-3. The old credentials are gone with the old phone. Nobody else can use them: a proof needs the wallet's key, and that key never left the device.
+3. The old credentials stay on the old phone. A proof needs the wallet's key, and that key never left the device. **If the phone was lost or stolen** rather than replaced, revoke its credentials: the wallet key is not tied to the phone's screen lock, so whoever can open your app on it could still prove with them.
 4. Revoke the old installation's wallet token with `DELETE /v1/wallets/{id}`, and optionally erase the old connection (`POST /v1/connections/{id}/erase`). 12iD removes a revoked wallet's mediator connection after 30 days.
 
 The SDK guide shows the app side (`reset()`, `WalletKeyLost`, and excluding the wallet from Android
@@ -105,6 +135,7 @@ all names and values together. Credentials carry claims, not documents.
 
 1. List the values; for each, decide "disclose" or "compare". Every "compare" value must be a whole number in range.
 2. Pick the validity period, and how you will re-issue (renewal, changed facts, a new phone).
-3. Decide how a user gets their credentials again on a new phone, and make it one step.
-4. Keep personal data out of `externalId` and out of attribute *names*.
-5. Publish in the staging environment first, issue to a test wallet, and run your proof templates against it.
+3. Decide when your backend revokes or suspends (an account closed, a fraud alert, a lost phone), and who may do it in the console.
+4. Decide how a user gets their credentials again on a new phone, and make it one step.
+5. Keep personal data out of `externalId` and out of attribute *names*.
+6. Publish in the staging environment first, issue to a test wallet, and run your proof templates against it.

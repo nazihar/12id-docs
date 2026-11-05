@@ -2,7 +2,7 @@
 
 **For:** the organisations that issue and verify credentials with 12iD, and their privacy and legal teams.
 **Describes:** what personal data 12iD holds, where, for how long, how it is erased, and how it is protected. Every statement here describes how the platform behaves today (revised 2026-10-05).
-**Related:** how credentials expire, why they cannot be revoked, and what happens when a user loses their phone: [`credential-model.md`](credential-model.md).
+**Related:** how credentials expire, how they are revoked and suspended, and what happens when a user loses their phone: [`credential-model.md`](credential-model.md).
 
 ## Roles
 
@@ -59,7 +59,7 @@ To complete the user's request, also delete your own copies (the data you receiv
 
 ## What erasure does not do
 
-- **It does not invalidate an issued credential.** 12iD v1 does not support revocation. A credential stays usable by the user until its `expiresOn` date has passed, even after you erased your records of it. Choose expiry periods with this in mind. If you need to invalidate credentials early, talk to us: it requires new credential definitions.
+- **It does not revoke an issued credential.** Erasing your records of a person and ending their credential are separate requests. If the credential should stop working too, revoke it (`POST /v1/credentials/{id}/revoke`, before or after the erasure): the platform keeps the credential's registry slot, which is not personal data, so it stays revocable after its data is erased. A revocation's reason is erased with the personal data. A credential of a definition published before revocation existed cannot be revoked and stays usable until its `expiresOn` date ([`credential-model.md`](credential-model.md), "Revoking and suspending").
 - It does not change the ledger. The ledger never held personal data.
 - It does not reach into the user's phone. The wallet is the user's.
 

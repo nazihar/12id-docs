@@ -307,15 +307,32 @@ backups. The SDK's own state is already in `noBackupFilesDir`; add for the frame
 
 and reference both from `<application android:dataExtractionRules=… android:fullBackupContent=…>`.
 
-## No recovery, no revocation
+## No recovery; expiry and revocation
 
 - **A lost phone means a lost wallet.** There is no backup or export in this version: after a reinstall
   or a new device the app onboards a new wallet and organisations issue credentials again. Design your
   onboarding so re-issuance is one step for the user.
-- **Credentials cannot be revoked**; they carry an `expiresOn` date (`YYYYMMDD`, UTC) that every
-  verifier checks with a predicate, so a credential simply stops being accepted after that day. `Credential.expiresAtEpochSeconds` is the last second of it.
-  `Credential.isExpired()` tells you when to prompt for renewal. Attribute values are strings; see the
-  platform guide for the encoding rules.
+- **Every credential expires.** It carries an `expiresOn` date (`YYYYMMDD`, UTC) that every verifier
+  checks, so it stops being accepted after that day. `Credential.expiresAtEpochSeconds` is the last second
+  of it, and `Credential.isExpired()` tells you when to prompt for renewal. Attribute values are strings;
+  see the platform guide for the encoding rules.
+- **The organisation can revoke or suspend a credential** (SDK 0.4.0 and platform 0.12; `Credential.revocable`
+  is true for those it can). Nothing arrives on the phone when it does: the credential stays in the wallet,
+  and the wallet stops offering it for proof requests (`ProofRequestOptions` leaves it out). To show its
+  state, call `OneTwoId.credentialStatus(id)`. It reads the ledger once and answers `Active`, `Revoked`
+  (also for a suspended credential; a suspension can be lifted), `NotRevocable`, or `Unknown` when offline.
+  ```kotlin
+  when (OneTwoId.credentialStatus(credential.id)) {
+      CredentialStatus.Revoked -> showBanner("Your bank has stopped this card")
+      CredentialStatus.Unknown -> Unit // offline: try again later
+      else -> Unit
+  }
+  ```
+- **Tails files.** The first proof with a revocable credential downloads its registry's file (about
+  2.4 MB per 10,000 credentials, once per registry) from the organisation's agent host, over the same
+  certificate trust as the rest of the SDK. The SDK checks it against the hash on the ledger before using it.
+  Earlier SDKs (0.3.0 and before) download it without that check, and cannot reach a Let's Encrypt host on
+  Android 7.0: use 0.4.0 for revocable credentials.
 
 ## Biometric checks (face liveness + match)
 
